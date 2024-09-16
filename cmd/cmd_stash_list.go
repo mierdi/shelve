@@ -75,10 +75,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.SetWidth(msg.Width)
 		return m, nil
 	case tea.KeyMsg:
-		switch msg.String() {
+		s := msg.String()
+		switch s {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "enter", "L":
+		case "enter", "L", "a":
 			m.selected = string(m.list.SelectedItem().(item))
 
 			if o, err := git.ApplyStash(m.list.Index()); err != nil {
@@ -88,10 +89,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.applied = true
 
-			return m, tea.Quit
+			if s != "a" {
+				return m, tea.Quit
+			}
+			fallthrough
+
 		case "d":
-			git.DropStash(m.list.Index())
+			if _, err := git.DropStash(m.list.Index()); err != nil {
+				m.output = err.Error()
+				return m, tea.Quit
+			}
 			m.list.RemoveItem(m.list.Index())
+
+			if s == "a" {
+				return m, tea.Quit
+			}
 
 			return m, nil
 		}
