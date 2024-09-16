@@ -23,7 +23,7 @@ func init() {
 }
 
 var (
-	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("19"))
+	selectedItemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("19"))
 	quitTextStyle     = lipgloss.NewStyle().Margin(0, 0, 1, 2)
 )
 
@@ -51,7 +51,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.stashList) {
+			if m.cursor < len(m.stashList)-1 {
 				m.cursor++
 			}
 		case "enter", "L", "a":
@@ -106,12 +106,12 @@ func (m model) View() string {
 	lines := make([]string, 0, len(m.stashList))
 
 	for i, s := range m.stashList {
-		cursor := " "
+		line := s
 
 		if m.cursor == i {
-			cursor = ">"
+			line = selectedItemStyle.Render(line)
 		}
-		lines = append(lines, selectedItemStyle.Render(fmt.Sprintf("%s %s", cursor, s)))
+		lines = append(lines, line)
 	}
 	lines = append(lines, "\n")
 
