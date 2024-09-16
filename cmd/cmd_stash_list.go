@@ -2,13 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"shelve/git"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -24,45 +22,17 @@ func init() {
 	MainCommand.AddCommand(cmdStashSelect)
 }
 
-const listHeight = 10
-
 var (
-	itemStyle         = lipgloss.NewStyle().PaddingLeft(4)
 	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("19"))
-	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(2)
-	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
+	quitTextStyle     = lipgloss.NewStyle().Margin(0, 0, 1, 2)
 )
 
-type item string
-
-func (i item) FilterValue() string { return "" }
-
-type itemDelegate struct{}
-
-func (d itemDelegate) Height() int                             { return 1 }
-func (d itemDelegate) Spacing() int                            { return 0 }
-func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	i, ok := listItem.(item)
-	if !ok {
-		return
-	}
-
-	fn := itemStyle.Render
-	if index == m.Index() {
-		fn = func(s ...string) string {
-			return selectedItemStyle.Render("> " + strings.Join(s, " "))
-		}
-	}
-
-	fmt.Fprint(w, fn(string(i)))
-}
-
 type model struct {
-	list     list.Model
-	selected string
-	output   string
-	applied  bool
+	stashList []string
+	cursor    int
+	selected  string
+	output    string
+	applied   bool
 }
 
 func (m model) Init() tea.Cmd {
@@ -71,23 +41,27 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.list.SetWidth(msg.Width)
-		return m, nil
 	case tea.KeyMsg:
 		s := msg.String()
 		switch s {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.stashList) {
+				m.cursor++
+			}
 		case "enter", "L", "a":
-			m.selected = string(m.list.SelectedItem().(item))
-
-			if o, err := git.ApplyStash(m.list.Index()); err != nil {
+			if o, err := git.ApplyStash(m.cursor); err != nil {
 				m.output = err.Error()
 			} else {
 				m.output = o
 			}
 			m.applied = true
+			m.selected = m.stashList[m.cursor]
 
 			if s != "a" {
 				return m, tea.Quit
@@ -95,11 +69,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fallthrough
 
 		case "d":
-			if _, err := git.DropStash(m.list.Index()); err != nil {
+			if _, err := git.DropStash(m.cursor); err != nil {
 				m.output = err.Error()
 				return m, tea.Quit
 			}
-			m.list.RemoveItem(m.list.Index())
+			stashList, err := git.GetStashList()
+
+			if err != nil {
+				m.output = err.Error()
+				return m, tea.Quit
+			}
+			m.stashList = stashList
 
 			if s == "a" {
 				return m, tea.Quit
@@ -109,49 +89,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-
-	return m, cmd
+	return m, nil
 }
 
 func (m model) View() string {
 	if m.applied {
 		return quitTextStyle.Render(strings.Join([]string{
 			fmt.Sprintf("Applied: %s", m.selected),
-			"\n",
 			m.output,
 		}, "\n"))
 	}
 
-	return "\n" + m.list.View()
+	if len(m.stashList) == 0 {
+		return quitTextStyle.Render("No items...")
+	}
+	lines := make([]string, 0, len(m.stashList))
+
+	for i, s := range m.stashList {
+		cursor := " "
+
+		if m.cursor == i {
+			cursor = ">"
+		}
+		lines = append(lines, selectedItemStyle.Render(fmt.Sprintf("%s %s", cursor, s)))
+	}
+	lines = append(lines, "\n")
+
+	return strings.Join(lines, "\n")
 }
 
 func selectStash(cmd *cobra.Command, args []string) {
-	const defaultWidth = 20
-
 	stashList, err := git.GetStashList()
 
 	if err != nil {
 		log.Fatal(err)
 	}
-	items := make([]list.Item, 0, len(stashList))
 
-	for _, stashItem := range stashList {
-		items = append(items, item(stashItem))
-	}
-	list := list.New(items, itemDelegate{}, defaultWidth, listHeight)
-	list.SetShowTitle(false)
-	list.SetShowHelp(false)
-	list.SetShowStatusBar(false)
-	list.SetFilteringEnabled(false)
-	list.Styles.PaginationStyle = paginationStyle
-
-	m := model{
-		list: list,
-	}
-
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	if _, err := tea.NewProgram(model{stashList: stashList}).Run(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
